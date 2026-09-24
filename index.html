@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Lung Deposition Simulator</title>
+  <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+  <style>
+  body {
+    font-family: Arial, sans-serif;
+    max-width: 700px;
+    margin: 30px auto;
+    padding: 0 15px;
+    color: #222;
+  }
+  h1 {
+    color: #1f8a80;
+    border-bottom: 2px solid #1f8a80;
+    padding-bottom: 10px;
+  }
+  label {
+    font-weight: bold;
+    margin-right: 8px;
+  }
+  select {
+    padding: 6px 10px;
+    margin-bottom: 12px;
+    border-radius: 5px;
+  }
+  button {
+    background-color: #1f8a80;
+    color: white;
+    border: none;
+    padding: 10px 25px;
+    border-radius: 6px;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  #result {
+    background: #f0f8f7;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 16px;
+    margin-top: 15px;
+  }
+  div[id$="Plot"] {
+    width: 100% !important;
+    max-width: 650px;
+    margin: 25px 0;
+  }
+</style>
+</head>
+<body>
+  <h1>Lung Particle Deposition Simulator</h1>
+
+  <label for="size">Particle size:</label>
+  <select id="size">
+    <option value="1">1 µm</option>
+    <option value="3">3 µm</option>
+    <option value="5">5 µm</option>
+  </select>
+
+  <br><br>
+
+  <label for="speed">Breathing pattern:</label>
+  <select id="speed">
+    <option value="0.25">Slow</option>
+    <option value="0.50">Normal</option>
+    <option value="0.80">Fast</option>
+  </select>
+
+  <br><br>
+
+  <label for="angle">Inhaler angle:</label>
+  <select id="angle">
+    <option value="0">0°</option>
+    <option value="30">30°</option>
+    <option value="45">45°</option>
+  </select>
+
+  <br><br>
+
+  <button onclick="runSimulation()">Simulate</button>
+
+  <p id="result"></p>
+  <div id="breathPlot" style="width:600px;height:400px;"></div>
+  <div id="airwayPlot" style="width:600px;height:500px;"></div>
+  <div id="heatPlot" style="width:600px;height:400px;"></div>
+<div id="anglePlot" style="width:600px;height:400px;"></div>
+  <script>
+  // Airway branch points (mm)
+  const S = [[0,0,0],[0,0,40],[0,0,40],[18,-6,65],[-18,-6,65],[30,-12,90],[-30,-12,90]];
+  const E = [[0,0,40],[18,-6,65],[-18,-6,65],[30,-12,90],[-30,-12,90],[38,-16,112],[-38,-16,112]];
+
+  function drawAirway(depositX, depositY, depositZ) {
+    const traces = [];
+    for (let k = 0; k < 7; k++) {
+      traces.push({
+        type: "scatter3d", mode: "lines",
+        x: [S[k][0], E[k][0]], y: [S[k][1], E[k][1]], z: [S[k][2], E[k][2]],
+        line: { width: 8, color: "teal" }, showlegend: false
+      });
+    }
+    traces.push({
+      type: "scatter3d", mode: "markers",
+      x: depositX, y: depositY, z: depositZ,
+      marker: { size: 4, color: "orange" }, name: "Deposited particles"
+    });
+    Plotly.newPlot("airwayPlot", traces, {
+      scene: { xaxis: {title:"X (mm)"}, yaxis: {title:"Y (mm)"}, zaxis: {title:"Z (mm)"} },
+      title: "Airway & Particle Deposition"
+    });
+  }
+
+  function drawBreathing() {
+    function calcDeposition(sizeUm, U, angleDeg) {
+  const rho_p = 1000, mu = 1.81e-5, g = 9.81, Lc = 0.01;
+  const dp = sizeUm * 1e-6;
+  const tau = rho_p * dp * dp / (18 * mu);
+  const St = tau * U / Lc;
+  const settling = rho_p * g * dp * dp / (18 * mu);
+  const angleFactor = Math.sin(angleDeg * Math.PI / 180);
+  const Pimp = 1 - Math.exp(-5 * St * (1 + angleFactor));
+  const Psed = 1 - Math.exp(-settling * 0.1 / (0.005 * U));
+  let Pdep = 1 - (1 - Pimp) * (1 - Psed);
+  return Math.min(Math.max(Pdep, 0), 0.95) * 100;
+}
+
+function drawHeatmap() {
+  const sizes = [1, 3, 5];
+  const speeds = [0.25, 0.50, 0.80];
+  const names = ["Slow", "Normal", "Fast"];
+  const z = [];
+  for (let s = 0; s < 3; s++) {
+    const row = [];
+    for (let b = 0; b < 3; b++) {
+      row.push(calcDeposition(sizes[s], speeds[b], 0));
+    }
+    z.push(row);
+  }
+  Plotly.newPlot("heatPlot", [{
+    z: z, x: names, y: ["1 µm", "3 µm", "5 µm"], type: "heatmap", colorscale: "YlOrRd"
+  }], { title: "Deposition Heatmap (Angle = 0°)" });
+}
+
+function drawAngleEffect() {
+  const angles = [0, 30, 45];
+  const speeds = [0.25, 0.50, 0.80];
+  const names = ["Slow", "Normal", "Fast"];
+  const traces = [];
+  for (let b = 0; b < 3; b++) {
+    const y = angles.map(a => calcDeposition(3, speeds[b], a));
+    traces.push({ x: ["0°", "30°", "45°"], y: y, type: "bar", name: names[b] });
+  }
+  Plotly.newPlot("anglePlot", traces, {
+    barmode: "group",
+    xaxis: { title: "Inhaler angle" },
+    yaxis: { title: "Total deposition (%)" },
+    title: "Effect of Inhaler Angle (3 µm particle)"
+  });
+}
+drawHeatmap();
+drawAngleEffect();
+    const t = [];
+    for (let i = 0; i <= 400; i++) t.push(i * 0.01);
+    const speeds = [0.25, 0.50, 0.80];
+    const freqs = [10, 15, 25];
+    const names = ["Slow", "Normal", "Fast"];
+    const traces = [];
+    for (let k = 0; k < 3; k++) {
+      const flow = t.map(tt => speeds[k] * Math.sin(2 * Math.PI * freqs[k] / 60 * tt));
+      traces.push({ x: t, y: flow, type: "scatter", mode: "lines", name: names[k] });
+    }
+    Plotly.newPlot("breathPlot", traces, {
+      xaxis: { title: "Time (s)" },
+      yaxis: { title: "Airflow velocity (m/s)" },
+      title: "Breathing Pattern"
+    });
+  }
+
+  function runSimulation() {
+    const sizeUm = parseFloat(document.getElementById("size").value);
+    const U = parseFloat(document.getElementById("speed").value);
+    const angleDeg = parseFloat(document.getElementById("angle").value);
+
+    const rho_p = 1000, mu = 1.81e-5, g = 9.81, Lc = 0.01;
+    const dp = sizeUm * 1e-6;
+
+    const tau = rho_p * dp * dp / (18 * mu);
+    const St = tau * U / Lc;
+    const settling = rho_p * g * dp * dp / (18 * mu);
+
+    const angleFactor = Math.sin(angleDeg * Math.PI / 180);
+    const Pimp = 1 - Math.exp(-5 * St * (1 + angleFactor));
+    const Psed = 1 - Math.exp(-settling * 0.1 / (0.005 * U));
+    let Pdep = 1 - (1 - Pimp) * (1 - Psed);
+    Pdep = Math.min(Math.max(Pdep, 0), 0.95);
+
+    const totalDepPercent = (Pdep * 100).toFixed(1);
+
+    const N = 500;
+    const depositX = [], depositY = [], depositZ = [];
+    for (let n = 0; n < N; n++) {
+      if (Math.random() < Pdep) {
+        const branch = Math.random() < 0.5 ? 1 : -1;
+        if (Math.random() < 0.65) {
+          depositX.push(branch*18 + (Math.random()-0.5)*6);
+          depositY.push(-6 + (Math.random()-0.5)*4);
+          depositZ.push(65 + (Math.random()-0.5)*6);
+        } else {
+          depositX.push(branch*30 + (Math.random()-0.5)*6);
+          depositY.push(-12 + (Math.random()-0.5)*4);
+          depositZ.push(90 + (Math.random()-0.5)*6);
+        }
+      }
+    }
+
+    document.getElementById("result").innerHTML =
+      "Total Deposition: " + totalDepPercent + "%<br>" +
+      "Stokes Number: " + St.toExponential(2);
+
+    drawAirway(depositX, depositY, depositZ);
+  }
+
+  drawBreathing();
+</script>
+
+</body>
+</html>
